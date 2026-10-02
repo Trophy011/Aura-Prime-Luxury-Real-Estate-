@@ -115,7 +115,12 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || (!inputText.trim() && !pendingFile) || !activeThreadId) return;
+    if (!user || (!inputText.trim() && !pendingFile)) return;
+
+    const threadToUse = activeThreadId || `thread_${user.uid}_general`;
+    if (!activeThreadId) {
+      setActiveThreadId(threadToUse);
+    }
 
     setSending(true);
     setFileError(null);
@@ -124,7 +129,7 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
       const msgType = pendingFile ? (isImg ? 'image' : 'document') : 'text';
 
       await sendChatMessage(
-        activeThreadId,
+        threadToUse,
         user.uid,
         user.email,
         user.displayName || user.email,
@@ -143,9 +148,9 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
       setInputText('');
       setPendingFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to send message:', err);
-      setFileError('Failed to deliver message. Please retry.');
+      setFileError(err?.message || 'Failed to deliver message. Please retry.');
     } finally {
       setSending(false);
     }

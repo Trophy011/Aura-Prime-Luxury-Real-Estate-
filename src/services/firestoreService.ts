@@ -86,16 +86,30 @@ export async function submitPurchaseArrangement(data: Omit<PurchaseArrangement, 
   const path = 'arrangements';
   try {
     const newDocRef = doc(collection(db, path));
-    const arrangement: PurchaseArrangement = {
-      ...data,
+    const arrangementData: Record<string, any> = {
       id: newDocRef.id,
+      propertyId: data.propertyId || '',
+      propertyTitle: data.propertyTitle || '',
+      propertyImage: data.propertyImage || '',
+      askingPrice: Number(data.askingPrice) || 0,
+      userId: data.userId || '',
+      userEmail: data.userEmail || '',
+      userName: data.userName || '',
+      userPhone: data.userPhone || '',
+      offerAmount: Number(data.offerAmount) || 0,
+      offerType: data.offerType || 'Cash Wire',
+      preferredClosing: data.preferredClosing || '30 Days',
+      notes: data.notes || '',
       status: 'Pending',
-      createdAt: new Date().toISOString()
-    };
-    await setDoc(newDocRef, {
-      ...arrangement,
+      createdAt: new Date().toISOString(),
       serverCreatedAt: serverTimestamp()
-    });
+    };
+
+    if (data.documentName) arrangementData.documentName = data.documentName;
+    if (data.documentUrl) arrangementData.documentUrl = data.documentUrl;
+    if (data.documentType) arrangementData.documentType = data.documentType;
+
+    await setDoc(newDocRef, arrangementData);
 
     // Also auto-create or update chat thread to alert management!
     await getOrCreateThreadForCustomer(
@@ -109,6 +123,7 @@ export async function submitPurchaseArrangement(data: Omit<PurchaseArrangement, 
     return newDocRef.id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, path);
+    throw err;
   }
 }
 
@@ -210,7 +225,8 @@ export async function getOrCreateThreadForCustomer(
     }
     return threadId;
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
+    console.warn('Thread fetch/create notice:', err);
+    return propertyId ? `thread_${customerId}_${propertyId}` : `thread_${customerId}_general`;
   }
 }
 
@@ -302,45 +318,54 @@ export async function sendChatMessage(
   try {
     const messageDocRef = doc(collection(db, messagesPath));
     const nowIso = new Date().toISOString();
-    const msg: ChatMessage = {
+
+    // Firestore strictly rejects 'undefined' field values. Only set defined properties.
+    const msgData: Record<string, any> = {
       id: messageDocRef.id,
       threadId,
-      senderId,
-      senderEmail,
-      senderName,
+      senderId: senderId || 'anonymous',
+      senderEmail: senderEmail || '',
+      senderName: senderName || (senderRole === 'admin' ? 'Executive Management' : 'Client'),
       senderRole,
-      content,
+      content: content || '',
       type,
-      fileUrl: fileData?.url,
-      fileName: fileData?.name,
-      fileSize: fileData?.size,
-      createdAt: nowIso
+      createdAt: nowIso,
+      serverCreatedAt: serverTimestamp()
     };
 
-    await setDoc(messageDocRef, {
-      ...msg,
-      serverCreatedAt: serverTimestamp()
-    });
+    if (fileData?.url) msgData.fileUrl = fileData.url;
+    if (fileData?.name) msgData.fileName = fileData.name;
+    if (fileData?.size) msgData.fileSize = fileData.size;
+
+    await setDoc(messageDocRef, msgData);
 
     // Update parent thread snippet and counters
     const snippet = type === 'image' 
       ? `📷 Photo: ${content || 'Sent a picture'}`
       : type === 'document' 
         ? `📄 Document: ${fileData?.name || 'Attached document'}`
-        : content;
+        : (content || 'New message');
 
     const threadDocRef = doc(db, 'threads', threadId);
-    const existingThreadSnap = await getDoc(threadDocRef);
+    let existingThreadData: any = null;
+    try {
+      const snap = await getDoc(threadDocRef);
+      if (snap.exists()) {
+        existingThreadData = snap.data();
+      }
+    } catch (e) {
+      console.warn('Thread fetch notice:', e);
+    }
 
-    if (!existingThreadSnap.exists()) {
+    if (!existingThreadData) {
       // First message in thread: construct complete thread document
-      await setDoc(threadDocRef, {
+      const newThreadDoc: Record<string, any> = {
         id: threadId,
         customerId: senderRole === 'customer' ? senderId : (threadMetadata?.customerId || ''),
         customerEmail: senderRole === 'customer' ? senderEmail : (threadMetadata?.customerEmail || ''),
         customerName: senderRole === 'customer' ? senderName : (threadMetadata?.customerName || ''),
         propertyId: threadMetadata?.propertyId || '',
-        propertyTitle: threadMetadata?.propertyTitle || 'General Real Estate Inquiry',
+        propertyTitle: threadMetadata?.propertyTitle || 'The Oakridge Executive Residence & Private Grounds',
         lastMessage: snippet,
         lastMessageAt: nowIso,
         unreadByAdmin: senderRole === 'customer' ? 1 : 0,
@@ -349,26 +374,27 @@ export async function sendChatMessage(
         updatedAt: nowIso,
         serverCreatedAt: serverTimestamp(),
         serverUpdatedAt: serverTimestamp()
-      });
+      };
+      await setDoc(threadDocRef, newThreadDoc);
     } else {
-      const threadUpdate: any = {
+      const threadUpdate: Record<string, any> = {
         lastMessage: snippet,
         lastMessageAt: nowIso,
         updatedAt: nowIso,
         serverUpdatedAt: serverTimestamp()
       };
 
-      if (threadMetadata?.propertyTitle && !existingThreadSnap.data()?.propertyTitle) {
+      if (threadMetadata?.propertyTitle && !existingThreadData.propertyTitle) {
         threadUpdate.propertyTitle = threadMetadata.propertyTitle;
       }
-      if (threadMetadata?.propertyId && !existingThreadSnap.data()?.propertyId) {
+      if (threadMetadata?.propertyId && !existingThreadData.propertyId) {
         threadUpdate.propertyId = threadMetadata.propertyId;
       }
 
       if (senderRole === 'customer') {
-        threadUpdate.unreadByAdmin = 1;
+        threadUpdate.unreadByAdmin = (existingThreadData.unreadByAdmin || 0) + 1;
       } else {
-        threadUpdate.unreadByCustomer = 1;
+        threadUpdate.unreadByCustomer = (existingThreadData.unreadByCustomer || 0) + 1;
       }
 
       await setDoc(threadDocRef, threadUpdate, { merge: true });
@@ -379,7 +405,7 @@ export async function sendChatMessage(
       setTimeout(async () => {
         try {
           const autoMsgRef = doc(collection(db, `threads/${threadId}/messages`));
-          const propTitle = threadMetadata?.propertyTitle || existingThreadSnap.data()?.propertyTitle || 'your selected property';
+          const propTitle = threadMetadata?.propertyTitle || existingThreadData?.propertyTitle || 'your selected property';
           const autoContent = `Thank you for contacting the Executive Management Desk. We have successfully logged your inquiry regarding ${propTitle}. An acquisitions director has been notified and is reviewing your message. You can arrange direct purchase contracts or attach proof of funds at any time.`;
 
           await setDoc(autoMsgRef, {
@@ -407,6 +433,7 @@ export async function sendChatMessage(
       }, 1000);
     }
   } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, messagesPath);
+    console.error('Error in sendChatMessage:', err);
+    throw err;
   }
 }
