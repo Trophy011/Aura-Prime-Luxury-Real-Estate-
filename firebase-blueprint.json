@@ -1,0 +1,124 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "User UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User full name" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "role": { "type": "string", "enum": ["customer", "admin"], "description": "User role" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "email", "role"]
+    },
+    "Property": {
+      "title": "Property",
+      "description": "Real estate property listing",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Property unique ID" },
+        "title": { "type": "string", "description": "Property title" },
+        "price": { "type": "number", "description": "Price in USD" },
+        "location": { "type": "string", "description": "Address or location" },
+        "city": { "type": "string", "description": "City" },
+        "bedrooms": { "type": "number", "description": "Bedrooms count" },
+        "bathrooms": { "type": "number", "description": "Bathrooms count" },
+        "sqft": { "type": "number", "description": "Square footage" },
+        "description": { "type": "string", "description": "Detailed description" },
+        "status": { "type": "string", "enum": ["Available", "Under Offer", "Sold", "Exclusive"], "description": "Listing status" },
+        "featured": { "type": "boolean", "description": "Whether featured on homepage" },
+        "images": { "type": "array", "description": "List of property image URLs" },
+        "features": { "type": "array", "description": "List of property amenities" },
+        "createdAt": { "type": "string", "description": "Created timestamp" }
+      },
+      "required": ["id", "title", "price", "location", "status"]
+    },
+    "PurchaseArrangement": {
+      "title": "PurchaseArrangement",
+      "description": "Purchase proposal or arrangement submitted by a customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Arrangement ID" },
+        "propertyId": { "type": "string", "description": "Referenced property ID" },
+        "propertyTitle": { "type": "string", "description": "Property title" },
+        "userId": { "type": "string", "description": "Customer UID" },
+        "userEmail": { "type": "string", "description": "Customer email" },
+        "userName": { "type": "string", "description": "Customer name" },
+        "userPhone": { "type": "string", "description": "Customer phone" },
+        "offerAmount": { "type": "number", "description": "Proposed offer amount" },
+        "offerType": { "type": "string", "enum": ["Cash", "Mortgage", "Escrow", "Private viewing"], "description": "Financing/Offer arrangement type" },
+        "preferredClosing": { "type": "string", "description": "Target closing timeline" },
+        "notes": { "type": "string", "description": "Special conditions or message" },
+        "status": { "type": "string", "enum": ["Pending", "In Review", "Negotiating", "Accepted", "Declined"], "description": "Arrangement status" },
+        "documentName": { "type": "string", "description": "Uploaded document or proof of funds title" },
+        "documentUrl": { "type": "string", "description": "Document data or reference" },
+        "createdAt": { "type": "string", "description": "Submission timestamp" }
+      },
+      "required": ["id", "propertyId", "userId", "userEmail", "offerAmount", "status"]
+    },
+    "ChatThread": {
+      "title": "ChatThread",
+      "description": "Direct communication channel between a customer and management",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Thread ID" },
+        "customerId": { "type": "string", "description": "Customer UID" },
+        "customerEmail": { "type": "string", "description": "Customer email" },
+        "customerName": { "type": "string", "description": "Customer name" },
+        "propertyId": { "type": "string", "description": "Related property ID if applicable" },
+        "propertyTitle": { "type": "string", "description": "Related property title" },
+        "lastMessage": { "type": "string", "description": "Snippet of last message" },
+        "lastMessageAt": { "type": "string", "description": "Timestamp of last message" },
+        "unreadByAdmin": { "type": "number", "description": "Number of unread messages for admin" },
+        "unreadByCustomer": { "type": "number", "description": "Number of unread messages for customer" },
+        "createdAt": { "type": "string", "description": "Thread creation timestamp" }
+      },
+      "required": ["id", "customerId", "customerEmail", "customerName"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Message within a chat thread",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Message ID" },
+        "threadId": { "type": "string", "description": "Thread ID" },
+        "senderId": { "type": "string", "description": "Sender UID" },
+        "senderEmail": { "type": "string", "description": "Sender email" },
+        "senderName": { "type": "string", "description": "Sender name" },
+        "senderRole": { "type": "string", "enum": ["customer", "admin"], "description": "Role of the sender" },
+        "content": { "type": "string", "description": "Message text content" },
+        "type": { "type": "string", "enum": ["text", "image", "document"], "description": "Type of message" },
+        "fileUrl": { "type": "string", "description": "Attached file or image payload" },
+        "fileName": { "type": "string", "description": "Attached file name" },
+        "fileSize": { "type": "string", "description": "File size formatted string" },
+        "createdAt": { "type": "string", "description": "Timestamp" }
+      },
+      "required": ["id", "threadId", "senderId", "senderEmail", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile store"
+    },
+    "/properties/{propertyId}": {
+      "schema": "Property",
+      "description": "Real estate property listings"
+    },
+    "/arrangements/{arrangementId}": {
+      "schema": "PurchaseArrangement",
+      "description": "Customer purchase arrangements and offers"
+    },
+    "/threads/{threadId}": {
+      "schema": "ChatThread",
+      "description": "Customer-to-management conversation threads"
+    },
+    "/threads/{threadId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Messages with text, pictures, and documents inside chat thread"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Aura Prime Luxury Real Estate",
+  "description": "Exclusive luxury residential estates, direct purchase arrangements, private client management portal, and secure live negotiation chat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
