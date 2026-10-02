@@ -261,14 +261,17 @@ export function subscribeThreadMessages(threadId: string, callback: (messages: C
     return () => {};
   }
   const path = `threads/${threadId}/messages`;
-  const q = query(collection(db, path), orderBy('createdAt', 'asc'));
+  const q = collection(db, path);
   return onSnapshot(q, (snapshot) => {
     const list: ChatMessage[] = [];
     snapshot.forEach((d) => {
       list.push({ id: d.id, ...d.data() } as ChatMessage);
     });
+    // Sort chronologically on client to guarantee ordering without complex index constraints
+    list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     callback(list);
   }, (err) => {
+    console.warn('Thread messages snapshot warning:', err);
     try {
       handleFirestoreError(err, OperationType.LIST, path);
     } catch {
@@ -286,11 +289,19 @@ export async function sendChatMessage(
   senderRole: 'customer' | 'admin',
   content: string,
   type: 'text' | 'image' | 'document' = 'text',
-  fileData?: { url: string; name: string; size: string }
+  fileData?: { url: string; name: string; size: string },
+  threadMetadata?: {
+    customerId?: string;
+    customerEmail?: string;
+    customerName?: string;
+    propertyId?: string;
+    propertyTitle?: string;
+  }
 ): Promise<void> {
   const messagesPath = `threads/${threadId}/messages`;
   try {
     const messageDocRef = doc(collection(db, messagesPath));
+    const nowIso = new Date().toISOString();
     const msg: ChatMessage = {
       id: messageDocRef.id,
       threadId,
@@ -303,7 +314,7 @@ export async function sendChatMessage(
       fileUrl: fileData?.url,
       fileName: fileData?.name,
       fileSize: fileData?.size,
-      createdAt: new Date().toISOString()
+      createdAt: nowIso
     };
 
     await setDoc(messageDocRef, {
@@ -312,26 +323,89 @@ export async function sendChatMessage(
     });
 
     // Update parent thread snippet and counters
-    const threadPath = `threads/${threadId}`;
     const snippet = type === 'image' 
       ? `📷 Photo: ${content || 'Sent a picture'}`
       : type === 'document' 
         ? `📄 Document: ${fileData?.name || 'Attached document'}`
         : content;
 
-    const threadUpdate: any = {
-      lastMessage: snippet,
-      lastMessageAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    const threadDocRef = doc(db, 'threads', threadId);
+    const existingThreadSnap = await getDoc(threadDocRef);
 
-    if (senderRole === 'customer') {
-      threadUpdate.unreadByAdmin = 1;
+    if (!existingThreadSnap.exists()) {
+      // First message in thread: construct complete thread document
+      await setDoc(threadDocRef, {
+        id: threadId,
+        customerId: senderRole === 'customer' ? senderId : (threadMetadata?.customerId || ''),
+        customerEmail: senderRole === 'customer' ? senderEmail : (threadMetadata?.customerEmail || ''),
+        customerName: senderRole === 'customer' ? senderName : (threadMetadata?.customerName || ''),
+        propertyId: threadMetadata?.propertyId || '',
+        propertyTitle: threadMetadata?.propertyTitle || 'General Real Estate Inquiry',
+        lastMessage: snippet,
+        lastMessageAt: nowIso,
+        unreadByAdmin: senderRole === 'customer' ? 1 : 0,
+        unreadByCustomer: senderRole === 'admin' ? 1 : 0,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        serverCreatedAt: serverTimestamp(),
+        serverUpdatedAt: serverTimestamp()
+      });
     } else {
-      threadUpdate.unreadByCustomer = 1;
+      const threadUpdate: any = {
+        lastMessage: snippet,
+        lastMessageAt: nowIso,
+        updatedAt: nowIso,
+        serverUpdatedAt: serverTimestamp()
+      };
+
+      if (threadMetadata?.propertyTitle && !existingThreadSnap.data()?.propertyTitle) {
+        threadUpdate.propertyTitle = threadMetadata.propertyTitle;
+      }
+      if (threadMetadata?.propertyId && !existingThreadSnap.data()?.propertyId) {
+        threadUpdate.propertyId = threadMetadata.propertyId;
+      }
+
+      if (senderRole === 'customer') {
+        threadUpdate.unreadByAdmin = 1;
+      } else {
+        threadUpdate.unreadByCustomer = 1;
+      }
+
+      await setDoc(threadDocRef, threadUpdate, { merge: true });
     }
 
-    await setDoc(doc(db, 'threads', threadId), threadUpdate, { merge: true });
+    // If customer sends a message, Executive Management Desk automatically issues an official response
+    if (senderRole === 'customer') {
+      setTimeout(async () => {
+        try {
+          const autoMsgRef = doc(collection(db, `threads/${threadId}/messages`));
+          const propTitle = threadMetadata?.propertyTitle || existingThreadSnap.data()?.propertyTitle || 'your selected property';
+          const autoContent = `Thank you for contacting the Executive Management Desk. We have successfully logged your inquiry regarding ${propTitle}. An acquisitions director has been notified and is reviewing your message. You can arrange direct purchase contracts or attach proof of funds at any time.`;
+
+          await setDoc(autoMsgRef, {
+            id: autoMsgRef.id,
+            threadId,
+            senderId: 'aura-management-desk',
+            senderEmail: 'managementofficails001@gmail.com',
+            senderName: 'Executive Management Desk',
+            senderRole: 'admin',
+            content: autoContent,
+            type: 'text',
+            createdAt: new Date().toISOString(),
+            serverCreatedAt: serverTimestamp()
+          });
+
+          await setDoc(threadDocRef, {
+            lastMessage: autoContent,
+            lastMessageAt: new Date().toISOString(),
+            unreadByCustomer: 1,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (autoErr) {
+          console.warn('Auto response notice:', autoErr);
+        }
+      }, 1000);
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, messagesPath);
   }

@@ -20,8 +20,10 @@ import {
   subscribeThreadMessages, 
   sendChatMessage, 
   getOrCreateThreadForCustomer,
-  subscribeAdminChatThreads
+  subscribeAdminChatThreads,
+  subscribeCustomerThreads
 } from '../services/firestoreService';
+import { processFileForChat } from '../utils/fileUtils';
 
 interface LiveChatModalProps {
   initialThreadId?: string;
@@ -39,38 +41,45 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
   const [activeThreadId, setActiveThreadId] = useState<string>(initialThreadId || '');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [adminThreads, setAdminThreads] = useState<ChatThread[]>([]);
+  const [customerThreads, setCustomerThreads] = useState<ChatThread[]>([]);
   const [inputText, setInputText] = useState<string>('');
   const [pendingFile, setPendingFile] = useState<{ url: string; name: string; size: string; type: string } | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [sending, setSending] = useState<boolean>(false);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize customer thread if none provided
+  // Sync initialThreadId whenever it changes (e.g., opened from different property)
+  useEffect(() => {
+    if (initialThreadId) {
+      setActiveThreadId(initialThreadId);
+    }
+  }, [initialThreadId]);
+
+  // Subscribe to threads
   useEffect(() => {
     if (!user) return;
 
-    if (!activeThreadId) {
-      if (isAdmin) {
-        // Subscribe to all threads for admin to pick
-        const unsub = subscribeAdminChatThreads((threads) => {
-          setAdminThreads(threads);
-          if (threads.length > 0 && !activeThreadId) {
-            setActiveThreadId(threads[0].id);
-          }
-        });
-        return () => unsub();
-      } else {
-        // Customer creates or gets their thread
+    if (isAdmin) {
+      const unsub = subscribeAdminChatThreads((threads) => {
+        setAdminThreads(threads);
+        if (threads.length > 0 && !activeThreadId) {
+          setActiveThreadId(threads[0].id);
+        }
+      });
+      return () => unsub();
+    } else {
+      const unsub = subscribeCustomerThreads(user.uid, (threads) => {
+        setCustomerThreads(threads);
+      });
+
+      if (!activeThreadId) {
         getOrCreateThreadForCustomer(user.uid, user.email, user.displayName || user.email)
           .then((id) => setActiveThreadId(id))
           .catch(console.error);
       }
-    } else if (isAdmin) {
-      const unsub = subscribeAdminChatThreads((threads) => {
-        setAdminThreads(threads);
-      });
       return () => unsub();
     }
   }, [user, isAdmin, activeThreadId]);
@@ -89,30 +98,19 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setFileError(null);
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert('File size must be under 5MB.');
-      return;
+    try {
+      const processed = await processFileForChat(file);
+      setPendingFile(processed);
+    } catch (err: any) {
+      setFileError(err?.message || 'Failed to process file. Please ensure it is under 5MB.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const sizeStr = file.size > 1024 * 1024 
-        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` 
-        : `${Math.round(file.size / 1024)} KB`;
-
-      setPendingFile({
-        url: result,
-        name: file.name,
-        size: sizeStr,
-        type: file.type
-      });
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleSend = async (e: React.FormEvent) => {
@@ -120,6 +118,7 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
     if (!user || (!inputText.trim() && !pendingFile) || !activeThreadId) return;
 
     setSending(true);
+    setFileError(null);
     try {
       const isImg = pendingFile?.type.startsWith('image/');
       const msgType = pendingFile ? (isImg ? 'image' : 'document') : 'text';
@@ -132,7 +131,13 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
         isAdmin ? 'admin' : 'customer',
         inputText.trim(),
         msgType,
-        pendingFile ? { url: pendingFile.url, name: pendingFile.name, size: pendingFile.size } : undefined
+        pendingFile ? { url: pendingFile.url, name: pendingFile.name, size: pendingFile.size } : undefined,
+        {
+          customerId: user.uid,
+          customerEmail: user.email,
+          customerName: user.displayName || user.email,
+          propertyTitle: 'The Oakridge Executive Residence & Private Grounds'
+        }
       );
 
       setInputText('');
@@ -140,6 +145,7 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err) {
       console.error('Failed to send message:', err);
+      setFileError('Failed to deliver message. Please retry.');
     } finally {
       setSending(false);
     }
@@ -178,6 +184,15 @@ export const LiveChatModal: React.FC<LiveChatModalProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {fileError && (
+          <div className="p-3 bg-rose-500/10 border-b border-rose-500/30 text-rose-300 text-xs flex items-center justify-between px-4">
+            <span>{fileError}</span>
+            <button onClick={() => setFileError(null)} className="text-rose-400 hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* If user is not logged in: Prompt to Sign In */}
         {!user ? (

@@ -31,6 +31,7 @@ import {
   saveProperty, 
   deletePropertyDoc 
 } from '../services/firestoreService';
+import { processFileForChat } from '../utils/fileUtils';
 
 interface AdminDashboardProps {
   properties: Property[];
@@ -109,30 +110,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [chatFileError, setChatFileError] = useState<string | null>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setChatFileError(null);
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert('File size must be under 5MB.');
-      return;
+    try {
+      const processed = await processFileForChat(file);
+      setPendingFile(processed);
+    } catch (err: any) {
+      setChatFileError(err?.message || 'File processing error. Please choose a smaller file.');
+    } finally {
+      if (e.target) e.target.value = '';
     }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const sizeStr = file.size > 1024 * 1024 
-        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` 
-        : `${Math.round(file.size / 1024)} KB`;
-
-      setPendingFile({
-        url: result,
-        name: file.name,
-        size: sizeStr,
-        type: file.type
-      });
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleAdminSendMessage = async (e: React.FormEvent) => {
@@ -645,6 +637,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <span>{pendingFile.name} ({pendingFile.size})</span>
                       </div>
                       <button onClick={() => setPendingFile(null)} className="text-slate-400 hover:text-rose-400">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {chatFileError && (
+                    <div className="p-2.5 bg-rose-500/10 border-t border-rose-500/30 text-rose-300 text-xs flex items-center justify-between">
+                      <span>{chatFileError}</span>
+                      <button onClick={() => setChatFileError(null)} className="text-rose-400 hover:text-white">
                         <X className="w-4 h-4" />
                       </button>
                     </div>
